@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administración | Encuesta de Energía</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root{--dark:#161a1d;--wine:#9b2247;--green:#1e5b4f;--gold:#a57f2c;--gray:#98989a;--pale:#f5f6f7}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:var(--dark);background:var(--pale)}
+header{background:white;border-bottom:5px solid var(--wine);padding:19px max(20px,4vw);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:21px;margin:0}h2{font-size:19px;margin:0 0 14px}main{max-width:1350px;margin:24px auto;padding:0 18px}
+.panel{background:#fff;border:1px solid #e0e3e5;border-radius:12px;padding:22px;margin-bottom:18px}
+#loginPanel{max-width:460px;margin:65px auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}input,select{width:100%;padding:11px;border:1px solid #bfc6c9;border-radius:7px;font:inherit}
+button{background:var(--green);color:white;border:0;border-radius:7px;padding:11px 15px;cursor:pointer;font-weight:700}
+button.alt{background:var(--wine)}button.light{background:#e8efed;color:var(--green)}button:disabled{opacity:.5;cursor:wait}
+.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:16px 0}
+.muted{color:#627077;font-size:13px}.error{color:#9b2247;font-weight:700}.ok{color:var(--green)}
+.stats{display:flex;gap:12px;flex-wrap:wrap}.stat{padding:15px 22px;background:#f4f8f6;border-radius:8px;min-width:160px}
+.stat strong{display:block;font-size:23px;color:var(--green)}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;border-bottom:1px solid #e5e9eb;padding:10px;vertical-align:top}th{background:#f1f4f4;position:sticky;top:0}td button{padding:7px 10px;font-size:12px}
+details{margin:10px 0;border:1px solid #e0e4e6;border-radius:8px;padding:10px}summary{cursor:pointer;font-weight:700;color:var(--green)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:350px;overflow:auto;background:#f7f8f9;padding:12px;font-size:12px}
+.hidden{display:none!important}#status{min-height:24px}#detail{scroll-margin-top:20px}
+</style></head>
+<body>
+<header><div><h1>Administración de encuestas</h1><div class="muted">Consumo y Usos de Energía · Sector Comercial y de Servicios</div></div>
+<button id="logout" class="alt hidden">Cerrar sesión</button></header>
+<main>
+<section id="loginPanel" class="panel"><h2>Acceso administrativo</h2>
+<p class="muted">Acceso exclusivo para la cuenta administradora autorizada. No requiere contraseña.</p>
+<form id="loginForm"><label for="email">Correo electrónico autorizado</label><input id="email" type="email" autocomplete="email" value="crystian.martinez.rivera@gmail.com" required><div class="actions"><button type="submit">Enviar enlace de acceso</button></div></form><p class="muted">Recibirás un enlace por correo para entrar, sin contraseña. Revisa también la carpeta de spam.</p><p id="loginMsg" role="alert"></p></section>
+<section id="dashboard" class="hidden">
+<div class="panel"><h2>Resumen</h2><div class="stats">
+<div class="stat"><strong id="total">—</strong>Encuestas</div><div class="stat"><strong id="enviadas">—</strong>Enviadas</div><div class="stat"><strong id="borradores">—</strong>Borradores</div>
+</div><p class="muted">Los registros se consultan en modo de solo lectura. Las descargas pueden contener información confidencial.</p></div>
+<div class="panel"><h2>Consulta y exportación</h2><div class="grid">
+<div><label for="search">Buscar establecimiento, folio o entidad</label><input id="search" placeholder="Escriba para filtrar"></div>
+<div><label for="state">Entidad federativa</label><select id="state"><option value="">Todas</option></select></div>
+<div><label for="statusFilter">Estatus</label><select id="statusFilter"><option value="">Todos</option><option value="enviada">Enviadas</option><option value="borrador">Borradores</option></select></div>
+</div>
+<div class="actions"><button id="refresh">Actualizar</button><button id="exportAll" class="alt">Descargar base consolidada (Excel)</button><span id="count" class="muted"></span></div>
+<div class="tablewrap"><table><thead><tr><th>Folio</th><th>Establecimiento</th><th>Entidad</th><th>Giro</th><th>Estatus</th><th>Fecha de envío</th><th>Acciones</th></tr></thead><tbody id="rows"></tbody></table></div>
+</div>
+<div class="panel hidden" id="detail"><h2 id="detailTitle">Detalle</h2><div class="actions"><button id="exportOne">Descargar reporte individual (Excel)</button><button id="closeDetail" class="light">Cerrar detalle</button></div><div id="detailBody"></div></div>
+</section><p id="status" role="status"></p>
+</main>
+<script>
+'use strict';
+const URL_SUPABASE='https://hboxglbiwlhirdktwvwe.supabase.co';
+const CLAVE_PUBLICA='sb_publishable_p8XVnrkDjRqMaeGU4ByQEw_eFt-MSdF';
+const TABLES=['encuestas','areas_establecimiento','energeticos_establecimiento','energia_caracteristicas','facturas_energia','plantas_emergencia','practicas_eficiencia','sistemas_generacion','usos_finales'];
+const LABELS={encuestas:'Establecimiento',areas_establecimiento:'Áreas',energeticos_establecimiento:'Energéticos',energia_caracteristicas:'Características de energía',facturas_energia:'Facturas',plantas_emergencia:'Plantas de emergencia',practicas_eficiencia:'Prácticas de eficiencia',sistemas_generacion:'Sistemas de generación',usos_finales:'Usos finales'};
+const sb=window.supabase?.createClient(URL_SUPABASE,CLAVE_PUBLICA,{auth:{autoRefreshToken:true,persistSession:true,detectSessionInUrl:true,flowType:'pkce'}});
+const $=id=>document.getElementById(id);
+let all=[],selected=null,details=null,authorized=false;
+function message(s,bad=false){$('status').textContent=s;$('status').className=bad?'error':'muted'}
+function loginMessage(s){$('loginMsg').textContent=s;$('loginMsg').className='error'}
+function safe(v){return v==null?'':String(v)}
+function isAdmin(user){return user?.app_metadata?.role==='admin'}
+function showApp(yes){authorized=yes;$('dashboard').classList.toggle('hidden',!yes);$('loginPanel').classList.toggle('hidden',yes);$('logout').classList.toggle('hidden',!yes)}
+async function verify(){if(!sb){loginMessage('No se pudo cargar Supabase. Revise la conexión.');return}const {data,error}=await sb.auth.getUser();if(error||!data?.user){showApp(false);return}if(!isAdmin(data.user)){await sb.auth.signOut();showApp(false);loginMessage('Esta cuenta no tiene el rol administrativo requerido.');return}showApp(true);await load()}
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();loginMessage('');if(!sb)return;const btn=e.target.querySelector('button');btn.disabled=true;try{const {error}=await sb.auth.signInWithOtp({email:$('email').value.trim(),options:{emailRedirectTo:window.location.origin+window.location.pathname,shouldCreateUser:false}});if(error)throw error;$('loginMsg').className='ok';$('loginMsg').textContent='Solicitud enviada. Si la cuenta está autorizada, recibirás un enlace. Revisa también spam.';}catch(err){loginMessage('No fue posible enviar el enlace: '+err.message)}finally{btn.disabled=false}});
+sb?.auth.onAuthStateChange((event)=>{if(event==='SIGNED_IN')setTimeout(()=>verify(),0)});
+$('logout').onclick=async()=>{await sb.auth.signOut();all=[];details=null;selected=null;showApp(false);message('Sesión cerrada.')};
+async function fetchAll(table,folio){let result=[],start=0,chunk=500;while(true){let q=sb.from(table).select('*').range(start,start+chunk-1);if(folio!=null)q=q.eq(table==='encuestas'?'id':'encuesta_id',folio);const {data,error}=await q;if(error)throw new Error(table+': '+error.message);result.push(...data);if(data.length<chunk)break;start+=chunk;if(start>100000)throw new Error('Se alcanzó el límite de registros para '+table)}return result}
+async function load(){if(!authorized)return;message('Cargando encuestas…');try{all=await fetchAll('encuestas');all.sort((a,b)=>Number(b.id)-Number(a.id));$('total').textContent=all.length;$('enviadas').textContent=all.filter(x=>x.estatus_encuesta==='enviada').length;$('borradores').textContent=all.filter(x=>x.estatus_encuesta!=='enviada').length;const current=$('state').value;const states=[...new Set(all.map(x=>x.estado).filter(Boolean))].sort();$('state').replaceChildren(new Option('Todas',''),...states.map(x=>new Option(x,x)));$('state').value=states.includes(current)?current:'';render();message('Consulta actualizada.')}catch(e){message('Error al consultar: '+e.message,true)}}
+function filtered(){const term=$('search').value.trim().toLowerCase(),state=$('state').value,status=$('statusFilter').value;return all.filter(x=>(!state||x.estado===state)&&(!status||(status==='enviada'?x.estatus_encuesta==='enviada':x.estatus_encuesta!=='enviada'))&&(!term||[x.id,x.nombre_establecimiento,x.estado,x.municipio,x.giro_codigo].some(y=>safe(y).toLowerCase().includes(term))))}
+function td(text){const el=document.createElement('td');el.textContent=safe(text);return el}
+function date(v){return v?new Date(v).toLocaleString('es-MX'):'—'}
+function render(){const arr=filtered();$('count').textContent=arr.length+' registros visibles';const body=$('rows');body.replaceChildren();for(const x of arr){const tr=document.createElement('tr');[x.id,x.nombre_establecimiento,x.estado,x.giro_codigo,x.estatus_encuesta||x.estatus,date(x.fecha_envio)].forEach(v=>tr.append(td(v)));const last=document.createElement('td');const b=document.createElement('button');b.textContent='Ver detalle';b.onclick=()=>openDetail(x.id);last.append(b);tr.append(last);body.append(tr)}}
+['search','state','statusFilter'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));$('refresh').onclick=load;
+async function collect(ids){const out={};for(const t of TABLES){if(t==='encuestas'){out[t]=all.filter(x=>ids.includes(x.id));continue}const data=await fetchAll(t);out[t]=data.filter(x=>ids.includes(x.encuesta_id))}return out}
+function flatten(obj,prefix='',out={}){for(const [k,v] of Object.entries(obj||{})){const name=prefix?prefix+'.'+k:k;if(v&&typeof v==='object'&&!Array.isArray(v))flatten(v,name,out);else out[name]=Array.isArray(v)?JSON.stringify(v):v}return out}
+function addSheet(wb,name,rows){const flat=rows.map(r=>flatten(r));const ws=flat.length?XLSX.utils.json_to_sheet(flat):XLSX.utils.aoa_to_sheet([['Sin registros']]);XLSX.utils.book_append_sheet(wb,ws,name.slice(0,31))}
+function equipmentRows(rows){const out=[];for(const r of rows){const raw=r.datos_json||{};const usos=raw.usos||{};for(const [categoria,items] of Object.entries(usos)){if(!Array.isArray(items))continue;for(let i=0;i<items.length;i++)out.push({folio:r.encuesta_id,categoria,numero:i+1,...flatten(items[i])})}}return out}
+function makeWorkbook(data,individual=false){if(!window.XLSX)throw new Error('No se pudo cargar la librería Excel.');const wb=XLSX.utils.book_new();for(const t of TABLES)addSheet(wb,LABELS[t],data[t]||[]);addSheet(wb,'Equipos individuales',equipmentRows(data.usos_finales||[]));if(individual){const r=data.encuestas?.[0];addSheet(wb,'Resumen administrativo',[{folio:r?.id,establecimiento:r?.nombre_establecimiento,estado:r?.estado,estatus:r?.estatus_encuesta,fecha_envio:r?.fecha_envio,nota:'Referencia administrativa. Los datos y cálculos no constituyen un dictamen energético.'}])}return wb}
+function download(wb,name){XLSX.writeFile(wb,name)}
+$('exportAll').onclick=async()=>{if(!authorized)return;const ids=filtered().map(x=>x.id);if(!ids.length){message('No hay registros para exportar.',true);return}const b=$('exportAll');b.disabled=true;message('Preparando Excel consolidado…');try{const data=await collect(ids);download(makeWorkbook(data),`Base_Encuestas_Energia_${new Date().toISOString().slice(0,10)}.xlsx`);message('Excel generado con '+ids.length+' encuestas.')}catch(e){message('Error de exportación: '+e.message,true)}finally{b.disabled=false}};
+async function openDetail(id){if(!authorized)return;selected=id;details=null;$('detail').classList.remove('hidden');$('detailTitle').textContent='Folio '+id+' · Cargando…';$('detailBody').replaceChildren();message('Cargando detalle…');try{details={};for(const t of TABLES)details[t]=await fetchAll(t,id);const x=details.encuestas[0];$('detailTitle').textContent='Folio '+id+' · '+safe(x?.nombre_establecimiento);for(const t of TABLES){const d=document.createElement('details');const sum=document.createElement('summary');sum.textContent=LABELS[t]+' ('+details[t].length+')';d.append(sum);const pre=document.createElement('pre');pre.textContent=JSON.stringify(details[t],null,2);d.append(pre);$('detailBody').append(d)}message('Detalle consultado en modo de solo lectura.');$('detail').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){message('Error al abrir detalle: '+e.message,true)}}
+$('exportOne').onclick=()=>{if(!authorized||!details||selected==null)return;try{download(makeWorkbook(details,true),`Reporte_Administrativo_Folio_${selected}.xlsx`);message('Reporte individual generado.')}catch(e){message(e.message,true)}};
+$('closeDetail').onclick=()=>{$('detail').classList.add('hidden');selected=null;details=null};
+verify();
+</script></body></html>
